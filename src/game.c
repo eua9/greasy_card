@@ -125,7 +125,8 @@ static void shuffle_deck(Card *deck, int size, unsigned int *rng_state) {
     }
 }
 
-/* Builds a full 52-card deck, shuffles with the dealer's RNG, picks a random greasy card, deals one card to each player, resets chip bag, logs state, and sets turn to the first non-dealer. Caller must hold state_mutex. */
+/* Builds a full 52-card deck, shuffles with the dealer's RNG, picks a random greasy card, deals one card to each player, resets chip bag, logs state, and sets turn to the first non-dealer. 
+Caller must hold state_mutex. */
 static void setup_round_locked(GameState *game, PlayerState *players, PlayerState *dealer) {
     for (int i = 0; i < DECK_SIZE; i++) {
         game->deck[i].rank = (i % RANKS) + 1;
@@ -167,7 +168,8 @@ static void consume_chips_locked(GameState *game, PlayerState *player) {
     log_line(game, "BAG: %d Chips left", game->chips_left);
 }
 
-/* Current player (non-dealer) draws; if either card matches the greasy card the round ends with this player as winner. Otherwise a random one of the two hand cards is discarded to the bottom of the deck, one card kept, and chips are eaten; then turn advances. Caller must hold state_mutex. */
+/* Current player (non-dealer) draws; if either card matches the greasy card the round ends with this player as winner. Otherwise a random one of the two hand cards is discarded to the bottom of the deck, one card kept, and chips are eaten; then turn advances. 
+Caller must hold state_mutex. */
 static void do_turn_locked(GameState *game, PlayerState *player) {
     Card drawn = draw_from_deck(game);
     player->hand[1] = drawn;
@@ -254,7 +256,13 @@ void destroy_game(GameState *game) {
     pthread_mutex_destroy(&game->log_mutex);
 }
 
-/* Each player thread loops under state_mutex: the dealer thread runs setup when a new round is needed; all threads print their round result once; the dealer advances rounds; non-dealers take turns in order. pthread_cond_wait/broadcast serializes who acts next. Returns NULL. */
+/* Each player thread loops under state_mutex: 
+the dealer thread runs setup when a new round is needed (when round_setup_done is false); 
+the round outcome reporter thread prints their round result once (when round_complete is true and last_reported_round is less than current_round); 
+the dealer thread advances rounds (when round_complete is true and results_reported_count is equal to n_players); 
+the active non-dealer thread takes turns in order (when current_turn_id is equal to id and id is not equal to dealer_id); 
+the waiting thread waits on the condition variable (when none of the above conditions are met). 
+pthread_cond_wait/broadcast serializes who acts next. Returns NULL. */
 void *player_thread(void *arg) {
     ThreadArgs *thread_args = (ThreadArgs *)arg;
     GameState *game = thread_args->game;
