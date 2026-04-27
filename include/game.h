@@ -62,8 +62,11 @@ typedef struct {
     PlayerState *player;
 } ThreadArgs;
 
+/* Allocates log path, mutex/cond; must pair with destroy_game. */
 int init_game(GameState *game, int seed, int n_players, int chips_per_bag, const char *log_path);
+/* Releases resources from init_game. */
 void destroy_game(GameState *game);
+/* One thread per player: synchronized game loop (see game.c). */
 void *player_thread(void *arg);
 
 #endif

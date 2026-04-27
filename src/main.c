@@ -5,6 +5,7 @@
 
 #include "../include/game.h"
 
+/* Parses a strict positive decimal integer in a safe range; returns the value or -1 after printing an error. */
 static int parse_positive_int(const char *value, const char *name) {
     char *end = NULL;
     long parsed = strtol(value, &end, 10);
@@ -15,6 +16,7 @@ static int parse_positive_int(const char *value, const char *name) {
     return (int)parsed;
 }
 
+/* CLI entry: validates args, inits the game, spawns one pthread per player with a distinct rand_r seed, joins all threads, and frees resources. */
 int main(int argc, char **argv) {
     if (argc != 4) {
         fprintf(stderr, "Usage: %s <seed> <num_players> <chips_per_bag>\n", argv[0]);

@@ -5,6 +5,7 @@
 
 #include "../include/game.h"
 
+/* Maps 1..13 to "A", "2".."10", "J", "Q", "K" for log messages; numeric ranks use a small rotating string buffer. */
 static const char *rank_to_text(int rank) {
     switch (rank) {
         case 1:
@@ -25,6 +26,7 @@ static const char *rank_to_text(int rank) {
     }
 }
 
+/* Returns the suit name for logging. */
 static const char *suit_to_text(Suit suit) {
     switch (suit) {
         case HEARTS:
@@ -40,6 +42,7 @@ static const char *suit_to_text(Suit suit) {
     }
 }
 
+/* Formats a card as "Rank of Suit" for logging, using a rotating static buffer for concurrent call safety within one printf. */
 static const char *card_to_text(Card card) {
     static char buf[8][24];
     static int slot = 0;
@@ -48,6 +51,7 @@ static const char *card_to_text(Card card) {
     return buf[slot];
 }
 
+/* Appends one formatted line to the log file under the log mutex so interleaved lines from other threads are avoided. */
 static void log_line(GameState *game, const char *fmt, ...) {
     pthread_mutex_lock(&game->log_mutex);
     va_list args;
@@ -59,11 +63,13 @@ static void log_line(GameState *game, const char *fmt, ...) {
     pthread_mutex_unlock(&game->log_mutex);
 }
 
+/* Prints this player's won/lost result for a round to stdout (called with state mutex released during I/O). */
 static void print_round_result(int player_id, int round, bool won) {
     printf("Player %d %s round %d\n", player_id, won ? "won" : "lost", round);
     fflush(stdout);
 }
 
+/* Walks clockwise (IDs 1..N wrapping) from start_id to return the next player who is not the current dealer. */
 static int next_non_dealer_player(GameState *game, int start_id) {
     int candidate = start_id;
     for (int i = 0; i < game->n_players; i++) {
@@ -78,6 +84,7 @@ static int next_non_dealer_player(GameState *game, int start_id) {
     return game->dealer_id;
 }
 
+/* Removes and returns the top card of deck[0..deck_size); returns a safe fallback if the deck is empty (should not happen in play). */
 static Card draw_from_deck(GameState *game) {
     if (game->deck_size <= 0) {
         Card fallback = {1, HEARTS};
@@ -91,12 +98,14 @@ static Card draw_from_deck(GameState *game) {
     return card;
 }
 
+/* Pushes a discarded card to the end of the deck (restock from discards in order). */
 static void append_to_deck(GameState *game, Card card) {
     if (game->deck_size < DECK_SIZE) {
         game->deck[game->deck_size++] = card;
     }
 }
 
+/* Logs the current deck contents in order to the file for traceability. */
 static void log_deck(GameState *game) {
     char line[512];
     int offset = snprintf(line, sizeof(line), "DECK:");
@@ -106,6 +115,7 @@ static void log_deck(GameState *game) {
     log_line(game, "%s", line);
 }
 
+/* Fisher–Yates shuffle using rand_r for deterministic, per-caller randomness. */
 static void shuffle_deck(Card *deck, int size, unsigned int *rng_state) {
     for (int i = size - 1; i > 0; i--) {
         int j = (int)(rand_r(rng_state) % (unsigned int)(i + 1));
@@ -115,6 +125,7 @@ static void shuffle_deck(Card *deck, int size, unsigned int *rng_state) {
     }
 }
 
+/* Builds a full 52-card deck, shuffles with the dealer's RNG, picks a random greasy card, deals one card to each player, resets chip bag, logs state, and sets turn to the first non-dealer. Caller must hold state_mutex. */
 static void setup_round_locked(GameState *game, PlayerState *players, PlayerState *dealer) {
     for (int i = 0; i < DECK_SIZE; i++) {
         game->deck[i].rank = (i % RANKS) + 1;
@@ -143,6 +154,7 @@ static void setup_round_locked(GameState *game, PlayerState *players, PlayerStat
     game->round_setup_done = true;
 }
 
+/* Picks 1..5 chips via rng_state; if the bag runs short, a new full bag is opened, then that many chips are removed and logged. Caller must hold state_mutex. */
 static void consume_chips_locked(GameState *game, PlayerState *player) {
     int to_eat = (int)(rand_r(&player->rng_state) % 5U) + 1;
     if (game->chips_left < to_eat) {
@@ -155,6 +167,7 @@ static void consume_chips_locked(GameState *game, PlayerState *player) {
     log_line(game, "BAG: %d Chips left", game->chips_left);
 }
 
+/* Current player (non-dealer) draws; if either card matches the greasy card the round ends with this player as winner. Otherwise a random one of the two hand cards is discarded to the bottom of the deck, one card kept, and chips are eaten; then turn advances. Caller must hold state_mutex. */
 static void do_turn_locked(GameState *game, PlayerState *player) {
     Card drawn = draw_from_deck(game);
     player->hand[1] = drawn;
@@ -196,6 +209,7 @@ static void do_turn_locked(GameState *game, PlayerState *player) {
     game->current_turn_id = next_non_dealer_player(game, player->id);
 }
 
+/* Zeroes the game struct, sets round/dealer/turn from project rules, initializes mutexes and the condition variable, and opens the log file for write. Returns 0 on success. */
 int init_game(GameState *game, int seed, int n_players, int chips_per_bag, const char *log_path) {
     memset(game, 0, sizeof(*game));
     game->seed = seed;
@@ -230,6 +244,7 @@ int init_game(GameState *game, int seed, int n_players, int chips_per_bag, const
     return 0;
 }
 
+/* Closes the log file and destroys the synchronization objects created in init_game. */
 void destroy_game(GameState *game) {
     if (game->log_file != NULL) {
         fclose(game->log_file);
@@ -239,6 +254,7 @@ void destroy_game(GameState *game) {
     pthread_mutex_destroy(&game->log_mutex);
 }
 
+/* Each player thread loops under state_mutex: the dealer thread runs setup when a new round is needed; all threads print their round result once; the dealer advances rounds; non-dealers take turns in order. pthread_cond_wait/broadcast serializes who acts next. Returns NULL. */
 void *player_thread(void *arg) {
     ThreadArgs *thread_args = (ThreadArgs *)arg;
     GameState *game = thread_args->game;
